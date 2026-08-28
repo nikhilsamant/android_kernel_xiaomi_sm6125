@@ -274,13 +274,13 @@ DTC ?= $(objtree)/scripts/dtc/dtc
 DTC_FLAGS += -q
 
 # Disable noisy checks by default
+# NB: only -Wno-unit_address_vs_reg is understood by the older QCOM dtc_ext
+# (DTC 1.4.2-Android-build). The remaining five check names were added in a
+# later dtc and are appended by the "ifeq ($(DTC_EXT),)" block below, which
+# already restricts them to the in-tree dtc. Listing them here too made
+# DTC_EXT builds die with: FATAL ERROR: Unrecognized check name "simple_bus_reg"
 ifeq ($(KBUILD_ENABLE_EXTRA_GCC_CHECKS),)
-DTC_FLAGS += -Wno-unit_address_vs_reg \
-	-Wno-simple_bus_reg \
-	-Wno-unit_address_format \
-	-Wno-pci_bridge \
-	-Wno-pci_device_bus_num \
-	-Wno-pci_device_reg
+DTC_FLAGS += -Wno-unit_address_vs_reg
 endif
 
 ifeq ($(KBUILD_ENABLE_EXTRA_GCC_CHECKS),2)
