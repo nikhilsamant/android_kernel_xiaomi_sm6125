@@ -39,6 +39,7 @@
 #include <linux/proc_ns.h>
 #include <linux/proc_fs.h>
 #include <linux/anon_inodes.h>
+#include <linux/file.h>
 #include <linux/sched/signal.h>
 #include <linux/sched/task.h>
 #include <linux/idr.h>
@@ -440,6 +441,44 @@ EXPORT_SYMBOL_GPL(task_active_pid_ns);
 struct pid *find_ge_pid(int nr, struct pid_namespace *ns)
 {
 	return idr_get_next(&ns->idr, &nr);
+}
+
+static struct pid *pidfd_pid(const struct file *file)
+{
+	if (file->f_op != &pidfd_fops)
+		return ERR_PTR(-EBADF);
+
+	return file->private_data;
+}
+
+/**
+ * pidfd_get_pid() - Retrieve the struct pid a pidfd refers to.
+ *
+ * @fd: a file descriptor that must be a pidfd
+ *
+ * Returns the struct pid with an extra reference taken, or an ERR_PTR.
+ * Needed by waitid()'s P_PIDFD support.
+ *
+ * Backported from upstream commit 3695eae5fee0 ("pidfd: add P_PIDFD to
+ * waitid()"). This tree already carried pidfd_open() without it, so glibc
+ * users such as GLib would probe pidfd_open(), succeed, then take the pidfd
+ * path and get -EINVAL back from waitid() -- breaking every GLib child watch.
+ */
+struct pid *pidfd_get_pid(unsigned int fd)
+{
+	struct fd f;
+	struct pid *pid;
+
+	f = fdget(fd);
+	if (!f.file)
+		return ERR_PTR(-EBADF);
+
+	pid = pidfd_pid(f.file);
+	if (!IS_ERR(pid))
+		get_pid(pid);
+
+	fdput(f);
+	return pid;
 }
 
 /**
