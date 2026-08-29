@@ -1678,6 +1678,23 @@ static int __mtp_setup(struct mtp_instance *fi_mtp)
 	struct mtp_dev *dev;
 	int ret;
 
+	/*
+	 * mtp_device is a single static miscdevice, so this must only ever run
+	 * once. On Halium the host distro brings up the configfs gadget before
+	 * the Android container starts, so init's "mkdir .../functions/mtp.gs0"
+	 * lands here a second time. That used to be fatal: misc_register()
+	 * begins with INIT_LIST_HEAD(&misc->list), which unlinks the live
+	 * mtp_device from misc_list in place, and then fails on the duplicate
+	 * sysfs name before re-adding it -- leaving misc_list corrupted so the
+	 * *next* misc_register() in the kernel BUGs in __list_add_valid().
+	 * Bail out before touching misc_register(), and leave _mtp_dev pointing
+	 * at the device that is actually registered.
+	 */
+	if (_mtp_dev) {
+		pr_err("mtp: device already set up\n");
+		return -EBUSY;
+	}
+
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 
 	if (fi_mtp != NULL)
