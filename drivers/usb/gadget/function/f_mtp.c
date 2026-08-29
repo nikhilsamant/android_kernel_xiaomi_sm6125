@@ -1823,8 +1823,22 @@ struct usb_function_instance *alloc_inst_mtp_ptp(bool mtp_config)
 			pr_err("Error setting MTP\n");
 			return ERR_PTR(ret);
 		}
-	} else
+	} else {
+		/*
+		 * PTP shares the MTP device. __mtp_setup() sets _mtp_dev to
+		 * NULL when it fails, so if the MTP function instance could
+		 * not be created (e.g. mtp.gs0 already exists and mkdir
+		 * returned -EBUSY) _mtp_dev is NULL here. Dereferencing it
+		 * below in mutex_init(&fi_mtp->dev->read_mutex) panics the
+		 * kernel. Fail the configfs mkdir gracefully instead.
+		 */
 		fi_mtp->dev = _mtp_dev;
+		if (!fi_mtp->dev) {
+			kfree(fi_mtp);
+			pr_err("PTP: no MTP device, create the MTP function first\n");
+			return ERR_PTR(-ENODEV);
+		}
+	}
 
 	config_group_init_type_name(&fi_mtp->func_inst.group,
 					"", &mtp_func_type);
