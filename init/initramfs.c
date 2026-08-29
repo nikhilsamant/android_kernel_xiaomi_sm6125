@@ -614,7 +614,20 @@ static int __init skip_initramfs_param(char *str)
 {
 	if (*str)
 		return 0;
-	do_skip_initramfs = 1;
+	/*
+	 * Halium/Ubuntu Touch: deliberately do NOT set do_skip_initramfs.
+	 *
+	 * On this A/B system-as-root device the bootloader appends
+	 * "skip_initramfs" for a normal boot and omits it for recovery.
+	 * Honouring it here frees the boot ramdisk and hands control to
+	 * Android's /system/bin/init on the dm-verity system partition,
+	 * which aborts (no selinuxfs) and reboots to the bootloader.
+	 *
+	 * The halium boot ramdisk must always run; its init script reads
+	 * skip_initramfs back from /proc/cmdline (which still carries it,
+	 * as that is the raw saved_command_line) to choose normal vs
+	 * recovery boot itself.
+	 */
 	return 1;
 }
 __setup("skip_initramfs", skip_initramfs_param);
