@@ -1743,8 +1743,6 @@ static __latent_entropy struct task_struct *copy_process(
 	}
 
 	if (clone_flags & CLONE_PIDFD) {
-		int reserved;
-
 		/*
 		 * - CLONE_PARENT_SETTID is useless for pidfds and also
 		 *   parent_tidptr is used to return pidfds.
@@ -1757,14 +1755,17 @@ static __latent_entropy struct task_struct *copy_process(
 			return ERR_PTR(-EINVAL);
 
 		/*
-		 * Verify that parent_tidptr is sane so we can potentially
-		 * reuse it later.
+		 * Deliberately do NOT require *parent_tidptr to be zero.
+		 * Linux 5.2 briefly enforced that so the field could be
+		 * reused later, and 5.3 dropped it again because it
+		 * needlessly constrains callers.  Userspace built against
+		 * >=5.3 -- notably Qt's forkfd, which backs QProcess --
+		 * passes an uninitialised fd variable here.  Rejecting that
+		 * with -EINVAL makes forkfd conclude the kernel has no
+		 * CLONE_PIDFD and fall back to its SIGCHLD path, which never
+		 * delivers on this tree, so every QProcess::waitForFinished()
+		 * burns its full timeout instead of returning on child exit.
 		 */
-		if (get_user(reserved, parent_tidptr))
-			return ERR_PTR(-EFAULT);
-
-		if (reserved != 0)
-			return ERR_PTR(-EINVAL);
 	}
 
 	retval = -ENOMEM;
