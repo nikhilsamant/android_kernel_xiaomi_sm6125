@@ -172,8 +172,20 @@
 /*
  * Pinctrl enable
  * default: disable
+ *
+ * laurel_sprout needs this ON. The touch node names its states
+ * "pmx_ts_active"/"pmx_ts_suspend"/"pmx_ts_release" rather than "default",
+ * so the pinctrl core never applies them automatically -- only
+ * fts_pinctrl_select_normal(), compiled out below when this is 0, does.
+ *
+ * ts_int_active (trinket-pinctrl.dtsi) sets bias-pull-up on gpio88. Without
+ * it the pin stays no_pull, and since the controller's INT is open-drain it
+ * can never be pulled back high after the chip asserts it. The interrupt is
+ * IRQ_TYPE_EDGE_FALLING, so once the line latches low no further edge is
+ * ever generated: exactly one IRQ fires per boot and touch dies, while the
+ * chip itself stays healthy and keeps latching coordinates nobody reads.
  */
-#define FTS_PINCTRL_EN                          0
+#define FTS_PINCTRL_EN                          1
 
 /*
  * Customer power enable
