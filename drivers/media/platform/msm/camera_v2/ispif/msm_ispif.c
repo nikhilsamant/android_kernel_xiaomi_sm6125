@@ -444,6 +444,34 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 		ispif->clk_idx = 1;
 	}
 	memset(ispif->stereo_configured, 0, sizeof(ispif->stereo_configured));
+
+	/*
+	 * DIAGNOSTIC, temporary -- remove once the ISPIF reset timeout on
+	 * laurel_sprout is understood.
+	 *
+	 * Camera never streams here: the HAL reports ISPIF_INIT rc=-1 and this
+	 * function reports "VFE0 reset wait timeout". reset_complete[VFE0] is only
+	 * ever signalled from the ISPIF irq handler on RESET_DONE_IRQ, and
+	 * /proc/interrupts shows irq "ispif" at 0 counts on every CPU since boot,
+	 * while csid, vfe and cci all fire. So clocks, regulators and the interrupt
+	 * controller are fine and the problem is specific to ISPIF.
+	 *
+	 * The open question is whether the reset completes in hardware but is
+	 * masked off, or never happens at all. Dumping the mask registers before
+	 * the reset and the status registers after the timeout separates the two:
+	 * RESET_DONE (bit 27) latched in IRQ_STATUS_0 with IRQ_MASK_0 clear means a
+	 * masking bug; RESET_DONE absent means the reset itself is not happening.
+	 *
+	 * Note msm_ispif_reset() below deliberately writes 0 to all three mask
+	 * registers, so anything that ran before us leaves them cleared.
+	 */
+	pr_info("ispif-diag: pre-reset hw_num_isps=%u num_clk=%u vfe_vdd_count=%d mask0=0x%08x mask1=0x%08x mask2=0x%08x status0=0x%08x\n",
+		ispif->hw_num_isps, ispif->num_clk, ispif->vfe_vdd_count,
+		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_MASK_0(VFE0)),
+		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_MASK_1(VFE0)),
+		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_MASK_2(VFE0)),
+		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_STATUS_0(VFE0)));
+
 	atomic_set(&ispif->reset_trig[VFE0], 1);
 	/* initiate reset of ISPIF */
 	msm_camera_io_w(ISPIF_RST_CMD_MASK,
@@ -454,6 +482,28 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 	CDBG("%s: VFE0 done\n", __func__);
 
 	if (timeout <= 0) {
+		uint32_t st0, st1, st2;
+
+		/*
+		 * DIAGNOSTIC, temporary -- see the comment above.
+		 *
+		 * timeout < 0 rather than == 0 would mean
+		 * wait_for_completion_interruptible_timeout() returned -ERESTARTSYS
+		 * because a signal was pending, not that the hardware was late, so
+		 * print the raw return value too.
+		 */
+		st0 = msm_camera_io_r(ispif->base +
+				ISPIF_VFE_m_IRQ_STATUS_0(VFE0));
+		st1 = msm_camera_io_r(ispif->base +
+				ISPIF_VFE_m_IRQ_STATUS_1(VFE0));
+		st2 = msm_camera_io_r(ispif->base +
+				ISPIF_VFE_m_IRQ_STATUS_2(VFE0));
+		pr_info("ispif-diag: post-reset timeout_ret=%ld status0=0x%08x status1=0x%08x status2=0x%08x mask0=0x%08x RESET_DONE_latched=%d\n",
+			timeout, st0, st1, st2,
+			msm_camera_io_r(ispif->base +
+				ISPIF_VFE_m_IRQ_MASK_0(VFE0)),
+			!!(st0 & RESET_DONE_IRQ));
+
 		rc = -ETIMEDOUT;
 		pr_err("%s: VFE0 reset wait timeout\n", __func__);
 		goto clk_disable;
