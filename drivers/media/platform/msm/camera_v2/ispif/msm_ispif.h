@@ -48,6 +48,14 @@ struct ispif_device {
 	struct platform_device *pdev;
 	struct msm_sd_subdev msm_sd;
 	struct resource *irq;
+	/*
+	 * Tracks whether the ispif irq is currently enabled. enable_irq() and
+	 * disable_irq() are depth-refcounted, and msm_ispif_release() is reached
+	 * from both the ISPIF_RELEASE ioctl and ispif_close_node(), so without
+	 * this the disables outnumber the enables and the irq ends up masked for
+	 * good. See msm_ispif_set_irq_state().
+	 */
+	bool irq_enabled;
 	void __iomem *base;
 	void __iomem *clk_mux_base;
 	struct mutex mutex;

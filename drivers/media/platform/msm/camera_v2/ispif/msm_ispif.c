@@ -22,6 +22,7 @@
 #include <linux/compat.h>
 #include <media/msmb_isp.h>
 #include <linux/ratelimit.h>
+#include <linux/irq.h>
 
 #include "msm_ispif.h"
 #include "msm.h"
@@ -420,6 +421,37 @@ err:
 	return rc;
 }
 
+/*
+ * enable_irq()/disable_irq() keep a disable *depth*, not an on/off flag, so
+ * every disable has to be matched by exactly one enable. The raw calls in this
+ * driver do not balance: ispif_probe() disables once up front, and
+ * msm_ispif_release() disables again on every call while being reachable from
+ * BOTH the ISPIF_RELEASE ioctl and ispif_close_node(). The camera HAL's
+ * open/enumerate/close sequence therefore drives the depth above zero, and the
+ * single enable in msm_ispif_init() is not enough to bring it back down.
+ *
+ * The failure this produces is deceptive, because the hardware is fine. ISPIF
+ * resets correctly -- RESET_DONE latches in ISPIF_VFE_m_IRQ_STATUS_0 and the bit
+ * is unmasked in IRQ_MASK_0 -- but with the line masked at the interrupt
+ * controller the CPU never takes it, msm_io_ispif_irq() never runs,
+ * reset_complete[VFE0] is never signalled, and msm_ispif_reset_hw() reports
+ * "VFE0 reset wait timeout". /proc/interrupts shows irq "ispif" at 0 counts for
+ * the entire uptime while csid, vfe and cci all increment normally.
+ *
+ * Collapsing the calls into state transitions keeps the depth at 0 or 1.
+ */
+static void msm_ispif_set_irq_state(struct ispif_device *ispif, bool enable)
+{
+	if (!ispif || !ispif->irq)
+		return;
+
+	if (ispif->irq_enabled == enable)
+		return;
+
+	msm_camera_enable_irq(ispif->irq, enable ? 1 : 0);
+	ispif->irq_enabled = enable;
+}
+
 static int msm_ispif_reset_hw(struct ispif_device *ispif)
 {
 	int rc = 0;
@@ -446,25 +478,42 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 	memset(ispif->stereo_configured, 0, sizeof(ispif->stereo_configured));
 
 	/*
-	 * DIAGNOSTIC, temporary -- remove once the ISPIF reset timeout on
-	 * laurel_sprout is understood.
+	 * DIAGNOSTIC, temporary -- drop these dumps once the fix in
+	 * msm_ispif_set_irq_state() is confirmed on laurel_sprout.
 	 *
-	 * Camera never streams here: the HAL reports ISPIF_INIT rc=-1 and this
-	 * function reports "VFE0 reset wait timeout". reset_complete[VFE0] is only
-	 * ever signalled from the ISPIF irq handler on RESET_DONE_IRQ, and
-	 * /proc/interrupts shows irq "ispif" at 0 counts on every CPU since boot,
-	 * while csid, vfe and cci all fire. So clocks, regulators and the interrupt
-	 * controller are fine and the problem is specific to ISPIF.
+	 * The first round of instrumentation answered the original question. The
+	 * reset is NOT failing in hardware:
 	 *
-	 * The open question is whether the reset completes in hardware but is
-	 * masked off, or never happens at all. Dumping the mask registers before
-	 * the reset and the status registers after the timeout separates the two:
-	 * RESET_DONE (bit 27) latched in IRQ_STATUS_0 with IRQ_MASK_0 clear means a
-	 * masking bug; RESET_DONE absent means the reset itself is not happening.
+	 *   pre-reset  mask0=0x08000000 status0=0x00000000
+	 *   post-reset mask0=0x08000000 status0=0x08000000 RESET_DONE_latched=1
+	 *              timeout_ret=0
 	 *
-	 * Note msm_ispif_reset() below deliberately writes 0 to all three mask
-	 * registers, so anything that ran before us leaves them cleared.
+	 * RESET_DONE (bit 27) is unmasked in IRQ_MASK_0 and does latch in
+	 * IRQ_STATUS_0, and timeout_ret=0 rules out -ERESTARTSYS from a pending
+	 * signal. So the block resets correctly and the interrupt is simply never
+	 * delivered to the CPU -- irq "ispif" sits at 0 counts in /proc/interrupts
+	 * for the whole uptime while csid, vfe and cci all increment.
+	 *
+	 * That points at the line being masked at the interrupt controller, which
+	 * msm_ispif_set_irq_state() above now prevents. gic_masked in the next dump
+	 * confirms it either way.
 	 */
+	{
+		struct irq_data *irqd = ispif->irq ?
+			irq_get_irq_data(ispif->irq->start) : NULL;
+
+		/*
+		 * gic_masked is the answer we actually need: the previous round
+		 * showed the reset completing (RESET_DONE latched) with the bit
+		 * unmasked in IRQ_MASK_0, yet zero interrupts delivered. That only
+		 * happens if the line is masked at the interrupt controller.
+		 */
+		pr_info("ispif-diag: irq=%d irq_enabled=%d gic_masked=%d\n",
+			ispif->irq ? (int)ispif->irq->start : -1,
+			ispif->irq_enabled,
+			irqd ? irqd_irq_disabled(irqd) : -1);
+	}
+
 	pr_info("ispif-diag: pre-reset hw_num_isps=%u num_clk=%u vfe_vdd_count=%d mask0=0x%08x mask1=0x%08x mask2=0x%08x status0=0x%08x\n",
 		ispif->hw_num_isps, ispif->num_clk, ispif->vfe_vdd_count,
 		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_MASK_0(VFE0)),
@@ -1793,11 +1842,7 @@ static int msm_ispif_init(struct ispif_device *ispif,
 		return rc;
 	}
 
-	rc = msm_camera_enable_irq(ispif->irq, 1);
-	if (rc < 0) {
-		pr_err("%s:Error enabling IRQs\n", __func__);
-		return rc;
-	}
+	msm_ispif_set_irq_state(ispif, true);
 	/* can we set to zero? */
 	ispif->applied_intf_cmd[VFE0].intf_cmd  = 0xFFFFFFFF;
 	ispif->applied_intf_cmd[VFE0].intf_cmd1 = 0xFFFFFFFF;
@@ -1845,7 +1890,7 @@ static void msm_ispif_release(struct ispif_device *ispif)
 		return;
 	}
 
-	msm_camera_enable_irq(ispif->irq, 0);
+	msm_ispif_set_irq_state(ispif, false);
 
 	ispif->ispif_state = ISPIF_POWER_DOWN;
 
@@ -2112,9 +2157,9 @@ static int ispif_probe(struct platform_device *pdev)
 		rc = -ENODEV;
 		goto get_irq_fail;
 	}
-	rc = msm_camera_enable_irq(ispif->irq, 0);
-	if (rc)
-		goto sd_reg_fail;
+	/* devm_request_irq() leaves the line enabled; record that before masking */
+	ispif->irq_enabled = true;
+	msm_ispif_set_irq_state(ispif, false);
 
 	ispif->pdev = pdev;
 
