@@ -22,7 +22,6 @@
 #include <linux/compat.h>
 #include <media/msmb_isp.h>
 #include <linux/ratelimit.h>
-#include <linux/irq.h>
 
 #include "msm_ispif.h"
 #include "msm.h"
@@ -477,50 +476,6 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 	}
 	memset(ispif->stereo_configured, 0, sizeof(ispif->stereo_configured));
 
-	/*
-	 * DIAGNOSTIC, temporary -- drop these dumps once the fix in
-	 * msm_ispif_set_irq_state() is confirmed on laurel_sprout.
-	 *
-	 * The first round of instrumentation answered the original question. The
-	 * reset is NOT failing in hardware:
-	 *
-	 *   pre-reset  mask0=0x08000000 status0=0x00000000
-	 *   post-reset mask0=0x08000000 status0=0x08000000 RESET_DONE_latched=1
-	 *              timeout_ret=0
-	 *
-	 * RESET_DONE (bit 27) is unmasked in IRQ_MASK_0 and does latch in
-	 * IRQ_STATUS_0, and timeout_ret=0 rules out -ERESTARTSYS from a pending
-	 * signal. So the block resets correctly and the interrupt is simply never
-	 * delivered to the CPU -- irq "ispif" sits at 0 counts in /proc/interrupts
-	 * for the whole uptime while csid, vfe and cci all increment.
-	 *
-	 * That points at the line being masked at the interrupt controller, which
-	 * msm_ispif_set_irq_state() above now prevents. gic_masked in the next dump
-	 * confirms it either way.
-	 */
-	{
-		struct irq_data *irqd = ispif->irq ?
-			irq_get_irq_data(ispif->irq->start) : NULL;
-
-		/*
-		 * gic_masked is the answer we actually need: the previous round
-		 * showed the reset completing (RESET_DONE latched) with the bit
-		 * unmasked in IRQ_MASK_0, yet zero interrupts delivered. That only
-		 * happens if the line is masked at the interrupt controller.
-		 */
-		pr_info("ispif-diag: irq=%d irq_enabled=%d gic_masked=%d\n",
-			ispif->irq ? (int)ispif->irq->start : -1,
-			ispif->irq_enabled,
-			irqd ? irqd_irq_disabled(irqd) : -1);
-	}
-
-	pr_info("ispif-diag: pre-reset hw_num_isps=%u num_clk=%u vfe_vdd_count=%d mask0=0x%08x mask1=0x%08x mask2=0x%08x status0=0x%08x\n",
-		ispif->hw_num_isps, ispif->num_clk, ispif->vfe_vdd_count,
-		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_MASK_0(VFE0)),
-		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_MASK_1(VFE0)),
-		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_MASK_2(VFE0)),
-		msm_camera_io_r(ispif->base + ISPIF_VFE_m_IRQ_STATUS_0(VFE0)));
-
 	atomic_set(&ispif->reset_trig[VFE0], 1);
 	/* initiate reset of ISPIF */
 	msm_camera_io_w(ISPIF_RST_CMD_MASK,
@@ -531,28 +486,6 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 	CDBG("%s: VFE0 done\n", __func__);
 
 	if (timeout <= 0) {
-		uint32_t st0, st1, st2;
-
-		/*
-		 * DIAGNOSTIC, temporary -- see the comment above.
-		 *
-		 * timeout < 0 rather than == 0 would mean
-		 * wait_for_completion_interruptible_timeout() returned -ERESTARTSYS
-		 * because a signal was pending, not that the hardware was late, so
-		 * print the raw return value too.
-		 */
-		st0 = msm_camera_io_r(ispif->base +
-				ISPIF_VFE_m_IRQ_STATUS_0(VFE0));
-		st1 = msm_camera_io_r(ispif->base +
-				ISPIF_VFE_m_IRQ_STATUS_1(VFE0));
-		st2 = msm_camera_io_r(ispif->base +
-				ISPIF_VFE_m_IRQ_STATUS_2(VFE0));
-		pr_info("ispif-diag: post-reset timeout_ret=%ld status0=0x%08x status1=0x%08x status2=0x%08x mask0=0x%08x RESET_DONE_latched=%d\n",
-			timeout, st0, st1, st2,
-			msm_camera_io_r(ispif->base +
-				ISPIF_VFE_m_IRQ_MASK_0(VFE0)),
-			!!(st0 & RESET_DONE_IRQ));
-
 		rc = -ETIMEDOUT;
 		pr_err("%s: VFE0 reset wait timeout\n", __func__);
 		goto clk_disable;
