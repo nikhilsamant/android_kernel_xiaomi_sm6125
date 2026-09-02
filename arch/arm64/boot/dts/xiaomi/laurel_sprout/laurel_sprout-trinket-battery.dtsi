@@ -8,6 +8,7 @@
 	qcom,shutdown_soc_threshold = <40>; /*40%*/
 	qcom,linearize-soc;
 	qcom,qg-use-s7-ocv;
+	qcom,qg-sleep-config;
 };
 
 &pmi632_charger {
