@@ -27,6 +27,7 @@ DEFINE_MSM_MUTEX(msm_flash_mutex);
 
 static struct v4l2_file_operations msm_flash_v4l2_subdev_fops;
 static struct led_trigger *torch_trigger;
+static struct led_trigger *switch_trigger;
 
 static const struct of_device_id msm_flash_dt_match[] = {
 	{.compatible = "qcom,camera-flash", .data = NULL},
@@ -64,6 +65,9 @@ static void msm_torch_brightness_set(struct led_classdev *led_cdev,
 	}
 
 	led_trigger_event(torch_trigger, value);
+
+	if (switch_trigger)
+		led_trigger_event(switch_trigger, !!value);
 };
 
 static struct led_classdev msm_torch_led[MAX_LED_TRIGGERS] = {
@@ -96,6 +100,13 @@ static int32_t msm_torch_create_classdev(struct platform_device *pdev,
 		pr_err("Invalid fctrl\n");
 		return -EINVAL;
 	}
+
+	/*
+	 * Captured before the loop: msm_torch_brightness_set() is called from
+	 * inside it (with LED_OFF, before each led_classdev_register), and it
+	 * now consults switch_trigger.
+	 */
+	switch_trigger = fctrl->switch_trigger;
 
 	for (i = 0; i < fctrl->torch_num_sources; i++) {
 		if (fctrl->torch_trigger[i]) {
