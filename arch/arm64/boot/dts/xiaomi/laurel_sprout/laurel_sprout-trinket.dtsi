@@ -153,10 +153,6 @@
 	};
 };
 
-&pm6125_rtc {
-	qcom,qpnp-rtc-write = <1>;
-};
-
 &pm6125_gpios {
 	key_vol_up {
 		key_vol_up_default: key_vol_up_default {
