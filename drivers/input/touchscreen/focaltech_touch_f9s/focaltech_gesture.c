@@ -580,6 +580,7 @@ void fts_gesture_recovery(struct fts_ts_data *ts_data)
 {
     if ((ENABLE == fts_gesture_data.mode) && (ENABLE == fts_gesture_data.active)) {
         FTS_DEBUG("gesture recovery...");
+        fts_write_reg(0xD1, 0xFF);
         fts_write_reg(0xD2, 0xFF);
         fts_write_reg(0xD5, 0xFF);
         fts_write_reg(0xD6, 0xFF);
@@ -608,22 +609,6 @@ int fts_gesture_suspend(struct fts_ts_data *ts_data)
         FTS_DEBUG("gesture is disabled");
         return -EINVAL;
     }
-    /*
-     * Arm the per-gesture enable masks. Suspend only ever programmed
-     * 0xD0/0xCF -- the gesture type masks are written nowhere else except
-     * fts_gesture_recovery() after an ESD reset, so on a normal screen off
-     * the FW keeps whatever mask state it powered up with and reports no
-     * gesture at all. Mirror the recovery values so double tap is actually
-     * recognised. Gated on lpwg_mode to leave the FOD/AOD paths untouched.
-     */
-    if (ts_data->lpwg_mode) {
-        fts_write_reg(0xD2, 0xFF);
-        fts_write_reg(0xD5, 0xFF);
-        fts_write_reg(0xD6, 0xFF);
-        fts_write_reg(0xD7, 0xFF);
-        fts_write_reg(0xD8, 0xFF);
-    }
-
 	ret = fts_read_reg(FTS_REG_FOD_EN, &double_val);
     if (ret < 0) {
         FTS_ERROR("set double_wakeup fail");
@@ -636,6 +621,20 @@ int fts_gesture_suspend(struct fts_ts_data *ts_data)
 	        if (ret < 0) {
 	            FTS_ERROR("set double_wakeup fail");
 	        }
+
+            /*
+             * Arm the gesture type enable masks. Without these the FW keeps
+             * whatever mask state it powered up with and reports no gesture at
+             * all, so 0xD0 reads back enabled but a double tap never raises the
+             * interrupt. focaltech_touch and ft8719_spi_c3j both write the full
+             * 0xD1-0xD8 set here; this driver was missing them entirely.
+             */
+            fts_write_reg(0xD1, 0xFF);
+            fts_write_reg(0xD2, 0xFF);
+            fts_write_reg(0xD5, 0xFF);
+            fts_write_reg(0xD6, 0xFF);
+            fts_write_reg(0xD7, 0xFF);
+            fts_write_reg(0xD8, 0xFF);
 		}
         fts_write_reg(FTS_REG_GESTURE_EN, ENABLE);
         msleep(10);
@@ -843,7 +842,7 @@ int fts_gesture_init(struct fts_ts_data *ts_data)
      * an interface that only the stock Xiaomi Android framework writes to.
      * Under Ubuntu Touch nothing does, so ts_data stays zeroed, and with
      * lpwg_mode false the FW never gets the FTS_REG_FOD_EN double_wakeup bit,
-     * fts_gesture_suspend() skips arming the 0xD2/0xD5-0xD8 masks, and
+     * fts_gesture_suspend() skips arming the 0xD1-0xD8 masks, and
      * fts_gesture_report() maps GESTURE_DOUBLECLICK to -1 and reports nothing.
      * All three paths need it, so turn it on here; fts_double_tap still
      * toggles it at runtime.
