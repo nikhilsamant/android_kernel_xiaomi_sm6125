@@ -175,70 +175,6 @@ void fts_gesture_enable(bool enable)
 	mutex_unlock(&input_dev->mutex);
 }
 
-/*
- * Double tap to wake.
- *
- * The double click gesture is gated on lpwg_mode in two places: the FW bit is
- * only armed in fts_gesture_suspend(), and fts_gesture_report() swallows
- * GESTURE_DOUBLECLICK unless it is set. Stock Android drives this over the
- * vendor EV_SYN/SYN_CONFIG channel from the Xiaomi touchfeature HAL, which
- * has no equivalent here, so expose it as a plain sysfs node instead.
- */
-static void fts_lpwg_set(struct fts_ts_data *ts_data, bool enable)
-{
-    int ret = 0;
-    u8 val = 0;
-
-    ts_data->lpwg_mode = enable;
-
-    ret = fts_read_reg(FTS_REG_FOD_EN, &val);
-    if (ret < 0) {
-        FTS_ERROR("read FOD_EN fail");
-        return;
-    }
-
-    if (enable)
-        val |= (1 << 0);
-    else
-        val &= ~(1 << 0);
-
-    ret = fts_write_reg(FTS_REG_FOD_EN, val);
-    if (ret < 0)
-        FTS_ERROR("set double_wakeup fail");
-}
-
-static ssize_t fts_lpwg_show(
-    struct device *dev, struct device_attribute *attr, char *buf)
-{
-    int count = 0;
-    struct input_dev *input_dev = fts_data->input_dev;
-
-    mutex_lock(&input_dev->mutex);
-    count = snprintf(buf, PAGE_SIZE, "%d\n", fts_data->lpwg_mode ? 1 : 0);
-    mutex_unlock(&input_dev->mutex);
-
-    return count;
-}
-
-static ssize_t fts_lpwg_store(
-    struct device *dev,
-    struct device_attribute *attr, const char *buf, size_t count)
-{
-    struct input_dev *input_dev = fts_data->input_dev;
-
-    mutex_lock(&input_dev->mutex);
-    if (FTS_SYSFS_ECHO_ON(buf)) {
-        FTS_DEBUG("enable double tap to wake");
-        fts_lpwg_set(fts_data, true);
-    } else if (FTS_SYSFS_ECHO_OFF(buf)) {
-        FTS_DEBUG("disable double tap to wake");
-        fts_lpwg_set(fts_data, false);
-    }
-    mutex_unlock(&input_dev->mutex);
-
-    return count;
-}
-
 static ssize_t fts_gesture_buf_show(
     struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -286,17 +222,10 @@ static DEVICE_ATTR(fts_gesture_mode, S_IRUGO | S_IWUSR, fts_gesture_show,
  */
 static DEVICE_ATTR(fts_gesture_buf, S_IRUGO | S_IWUSR,
                    fts_gesture_buf_show, fts_gesture_buf_store);
-/* sysfs double tap to wake node
- *   read example: cat fts_double_tap         --- read double tap to wake state
- *   write example:echo 1 > fts_double_tap    --- enable double tap to wake
- */
-static DEVICE_ATTR(fts_double_tap, S_IRUGO | S_IWUSR, fts_lpwg_show,
-                   fts_lpwg_store);
 
 static struct attribute *fts_gesture_mode_attrs[] = {
     &dev_attr_fts_gesture_mode.attr,
     &dev_attr_fts_gesture_buf.attr,
-    &dev_attr_fts_double_tap.attr,
     NULL,
 };
 
@@ -580,7 +509,6 @@ void fts_gesture_recovery(struct fts_ts_data *ts_data)
 {
     if ((ENABLE == fts_gesture_data.mode) && (ENABLE == fts_gesture_data.active)) {
         FTS_DEBUG("gesture recovery...");
-        fts_write_reg(0xD1, 0xFF);
         fts_write_reg(0xD2, 0xFF);
         fts_write_reg(0xD5, 0xFF);
         fts_write_reg(0xD6, 0xFF);
@@ -621,20 +549,6 @@ int fts_gesture_suspend(struct fts_ts_data *ts_data)
 	        if (ret < 0) {
 	            FTS_ERROR("set double_wakeup fail");
 	        }
-
-            /*
-             * Arm the gesture type enable masks. Without these the FW keeps
-             * whatever mask state it powered up with and reports no gesture at
-             * all, so 0xD0 reads back enabled but a double tap never raises the
-             * interrupt. focaltech_touch and ft8719_spi_c3j both write the full
-             * 0xD1-0xD8 set here; this driver was missing them entirely.
-             */
-            fts_write_reg(0xD1, 0xFF);
-            fts_write_reg(0xD2, 0xFF);
-            fts_write_reg(0xD5, 0xFF);
-            fts_write_reg(0xD6, 0xFF);
-            fts_write_reg(0xD7, 0xFF);
-            fts_write_reg(0xD8, 0xFF);
 		}
         fts_write_reg(FTS_REG_GESTURE_EN, ENABLE);
         msleep(10);
@@ -835,19 +749,6 @@ int fts_gesture_init(struct fts_ts_data *ts_data)
     memset(&fts_gesture_data, 0, sizeof(struct fts_gesture_st));
     fts_gesture_data.mode = ENABLE;
     fts_gesture_data.active = DISABLE;
-
-    /*
-     * Default double tap to wake on. lpwg_mode is otherwise only ever set from
-     * fts_switch_mode_work(), which is driven by INPUT_EVENT_WAKUP_MODE_ON --
-     * an interface that only the stock Xiaomi Android framework writes to.
-     * Under Ubuntu Touch nothing does, so ts_data stays zeroed, and with
-     * lpwg_mode false the FW never gets the FTS_REG_FOD_EN double_wakeup bit,
-     * fts_gesture_suspend() skips arming the 0xD1-0xD8 masks, and
-     * fts_gesture_report() maps GESTURE_DOUBLECLICK to -1 and reports nothing.
-     * All three paths need it, so turn it on here; fts_double_tap still
-     * toggles it at runtime.
-     */
-    ts_data->lpwg_mode = true;
 
     FTS_FUNC_EXIT();
     return 0;
