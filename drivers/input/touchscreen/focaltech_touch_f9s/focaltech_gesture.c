@@ -837,6 +837,19 @@ int fts_gesture_init(struct fts_ts_data *ts_data)
     fts_gesture_data.mode = ENABLE;
     fts_gesture_data.active = DISABLE;
 
+    /*
+     * Default double tap to wake on. lpwg_mode is otherwise only ever set from
+     * fts_switch_mode_work(), which is driven by INPUT_EVENT_WAKUP_MODE_ON --
+     * an interface that only the stock Xiaomi Android framework writes to.
+     * Under Ubuntu Touch nothing does, so ts_data stays zeroed, and with
+     * lpwg_mode false the FW never gets the FTS_REG_FOD_EN double_wakeup bit,
+     * fts_gesture_suspend() skips arming the 0xD2/0xD5-0xD8 masks, and
+     * fts_gesture_report() maps GESTURE_DOUBLECLICK to -1 and reports nothing.
+     * All three paths need it, so turn it on here; fts_double_tap still
+     * toggles it at runtime.
+     */
+    ts_data->lpwg_mode = true;
+
     FTS_FUNC_EXIT();
     return 0;
 }
