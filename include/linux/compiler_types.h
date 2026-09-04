@@ -328,7 +328,12 @@ struct ftrace_likely_data {
  *
  *  gcc: https://gcc.gnu.org/onlinedocs/gcc/Statement-Attributes.html#Statement-Attributes
  */
-#if __has_attribute(__fallthrough__)
+#if defined(__ASSEMBLY__)
+/* 'fallthrough' is a C statement attribute and is meaningless in assembly.
+ * GCC provides no __has_attribute when preprocessing .S files, and
+ * compiler-gcc.h (which carries the fallback) is inside the __ASSEMBLY__
+ * guard above, so the probe must not be evaluated here at all. */
+#elif __has_attribute(__fallthrough__)
 # define fallthrough                    __attribute__((__fallthrough__))
 #else
 # define fallthrough                    do {} while (0)  /* fallthrough */
