@@ -12,6 +12,10 @@
 # include <libintl.h>
 #else
 # include <features.h>
+/* musl does not define __attribute_format_arg__ (glibc sys/cdefs.h only) */
+# ifndef __attribute_format_arg__
+#  define __attribute_format_arg__(a)
+# endif
 __attribute_format_arg__(1)
 static inline const char *gettext(const char *txt) { return txt; }
 static inline void textdomain(const char *domainname) {}
