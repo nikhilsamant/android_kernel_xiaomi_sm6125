@@ -198,9 +198,11 @@
 
 /********************** Upgrade ****************************/
 /*
- * auto upgrade
+ * auto upgrade -- MUST stay 0. With 1 the driver reflashes the touch
+ * controller at probe from FTS_UPGRADE_FW_FILE, still the invalid fw_sample.i,
+ * which kills FOD irrecoverably. See DEVELOPMENT.md, "Fingerprint (FOD)".
  */
-#define FTS_AUTO_UPGRADE_EN                     1
+#define FTS_AUTO_UPGRADE_EN                     0
 
 /*
  * auto upgrade for lcd cfg
