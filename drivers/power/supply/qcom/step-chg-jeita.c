@@ -234,7 +234,7 @@ clean:
 EXPORT_SYMBOL(read_range_data_from_node);
 
 #ifdef CONFIG_MACH_XIAOMI_F9S
-const char *BATTERY_DEFAULT = "S88512_mtp_default_battery_4V4_4040mAh";
+const char *BATTERY_DEFAULT = "S88512_mtp_default_battery_4V4_4030mAh";
 #endif
 static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 {
